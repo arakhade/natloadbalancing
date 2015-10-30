@@ -4,6 +4,7 @@
  * A kernel module which implements a DNAT
  *
  * Compile using make. Use insmod nat.ko to insert the module
+ *
  */
 
 #include <linux/module.h>
