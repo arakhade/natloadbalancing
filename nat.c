@@ -63,11 +63,11 @@ nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_
 	unsigned short cl_port;
 	list_for_each(ptr, nat_head)
 	{
-			table_row = list_entry(ptr, struct nat_table, list);
-			cl_ip = table_row->client_ip;	
-			cl_port = table_row->client_port;
-			if(client_ipaddress== cl_ip && client_port == cl_port)
-				return table_row;
+		table_row = list_entry(ptr, struct nat_table, list);
+		cl_ip = table_row->client_ip;	
+		cl_port = table_row->client_port;
+		if(client_ipaddress== cl_ip && client_port == cl_port)
+			return table_row;
 	}
 	return NULL;
 }
@@ -101,11 +101,12 @@ unsigned int dnat_hook(unsigned int hooknum,
 	nat_table *rule; // A pointer to the structure of the corresponding rule
 
 	/* Accept packets from servers */
-	if((strcmp(in->name, if_eth0) == 0) || 
-		(strcmp(in->name, if_eth1) == 0)) 
-	{ 
-		return NF_ACCEPT; 
-	}
+	if(in)
+		if((strcmp(in->name, if_eth0) == 0) || 
+			(strcmp(in->name, if_eth1) == 0)) 
+		{ 
+			return NF_ACCEPT; 
+		}
 
     /* Drop packet if destination IP is not public IP of NAT */
 	sock_buff = *skb;
@@ -148,12 +149,13 @@ unsigned int snat_hook(unsigned int hooknum,
 	unsigned short destination_port;
 	nat_table *rule; // A pointer to the structure of the corresponding rule
 
-	/* Do not mangle packets other than from servers */
-	if(!(strcmp(in->name, if_eth0) == 0) || 
-		!(strcmp(in->name, if_eth1) == 0)) 
-	{ 
-		return NF_ACCEPT; 
-	}
+	/* Do not mangle packets other than from servers */\
+	if(in)
+		if(!(strcmp(in->name, if_eth0) == 0) || 
+			!(strcmp(in->name, if_eth1) == 0)) 
+		{ 
+			return NF_ACCEPT; 
+		}
 
 	/* Check if it's a UDP packet */
 	sock_buff = *skb;
