@@ -20,10 +20,10 @@
 #define PUBLIC_VIDEO_PORT_NAT "\xC3\x50"         // 50000
 #define NUMBER_OF_SERVERS     4
 
-char *server_ip[4]={	"\xC0\xA8\x01\x15", // 192.168.1.21
-						"\xC0\xA8\x01\x16", // 192.168.1.22
-						"\xC0\xA8\x01\x17",	// 192.168.1.23
-						"\xC0\xA8\x01\x18"};// 192.168.1.24
+char *server_ip[4]={	"\xC0\xA8\x01\x15", 	// 192.168.1.21
+			"\xC0\xA8\x01\x16", 	// 192.168.1.22
+			"\xC0\xA8\x01\x17",	// 192.168.1.23
+			"\xC0\xA8\x01\x18"};	// 192.168.1.24
 static int round_robin_server_number = 0;
 
 static struct nf_hook_ops netfilter_ops_in, netfilter_ops_out;
@@ -55,13 +55,13 @@ LIST_HEAD(nat_head);
 
 int table_entries = 0;
 
-nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_port,struct list_head *nat_head)
+nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_port)
 {
 	nat_table *table_row;
 	struct list_head *ptr;
 	unsigned int  cl_ip;
 	unsigned short cl_port;
-	list_for_each(ptr, nat_head)
+	list_for_each(ptr, &nat_head)
 	{
 		table_row = list_entry(ptr, struct nat_table, list);
 		cl_ip = table_row->client_ip;	
@@ -72,7 +72,7 @@ nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_
 	return NULL;
 }
 
-int	insert_nat_table_roundrobin(int source_ip,int source_port,struct list_head *nat_head)
+int	insert_nat_table_roundrobin(int source_ip,int source_port)
 {	
 	nat_table * temp;
 	//return 0 if not possible else retun 1;
@@ -83,8 +83,8 @@ int	insert_nat_table_roundrobin(int source_ip,int source_port,struct list_head *
 	temp->client_port = source_port;
 	temp->server_ip = *(unsigned int *)server_ip[round_robin_server_number];
 	ip_hdr(sock_buff)->daddr = temp->server_ip;
-	list_add(&temp->list, nat_head);
-	round_robin_server_number = (round_robin_server_number+1)%4;
+	list_add(&temp->list, &nat_head);
+	round_robin_server_number = (round_robin_server_number + 1) % 4;
 	
 	return 1;
 	
@@ -98,17 +98,20 @@ unsigned int dnat_hook(unsigned int hooknum,
 {
 	unsigned int source_ip;
 	unsigned short source_port;
+	int udp_len;
 	nat_table *rule; // A pointer to the structure of the corresponding rule
 
 	/* Accept packets from servers */
 	if(in)
+	{
 		if((strcmp(in->name, if_eth0) == 0) || 
 			(strcmp(in->name, if_eth1) == 0)) 
 		{ 
 			return NF_ACCEPT; 
 		}
+	}
 
-    /* Drop packet if destination IP is not public IP of NAT */
+	/* Drop packet if destination IP is not public IP of NAT */
 	sock_buff = *skb;
 	if(!sock_buff){ return NF_ACCEPT; }
 	if(!(ip_hdr(sock_buff))){ return NF_ACCEPT; }
@@ -124,7 +127,8 @@ unsigned int dnat_hook(unsigned int hooknum,
 
 	/* Search nat_table for client entry */
 	source_port =  udp_header->source; 
-	rule = search_nat_table(source_ip, source_port,&nat_head); 
+	udp_len = (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
+	rule = search_nat_table(source_ip, source_port); 
 	
 	if(rule != NULL)
 	{
@@ -132,9 +136,20 @@ unsigned int dnat_hook(unsigned int hooknum,
 	}
 	else
 	{
-		if(!(insert_nat_table_roundrobin(source_ip,source_port,&nat_head)))
+		if(!(insert_nat_table_roundrobin(source_ip, source_port)))
 			return NF_DROP;
 	}
+	udp_header->check = 0;
+	udp_header->check = csum_tcpudp_magic(ip_hdr(sock_buff)->saddr,
+					      ip_hdr(sock_buff)->daddr,
+					      udp_len,
+					      IPPROTO_UDP,
+					      csum_partial((unsigned char *)udp_header,
+							   udp_len,
+							   0));
+	ip_hdr(sock_buff)->check = 0;
+	ip_hdr(sock_buff)->check = ip_fast_csum(ip_hdr(sock_buff), ip_hdr(sock_buff)->ihl);
+
 	/* Accept all other packets */
 	return NF_ACCEPT;
 }
@@ -147,15 +162,18 @@ unsigned int snat_hook(unsigned int hooknum,
 {
 	unsigned int destination_ip;
 	unsigned short destination_port;
+	int udp_len;
 	nat_table *rule; // A pointer to the structure of the corresponding rule
 
-	/* Do not mangle packets other than from servers */\
+	/* Do not mangle packets other than from servers */
 	if(in)
+	{
 		if(!(strcmp(in->name, if_eth0) == 0) || 
 			!(strcmp(in->name, if_eth1) == 0)) 
 		{ 
 			return NF_ACCEPT; 
 		}
+	}
 
 	/* Check if it's a UDP packet */
 	sock_buff = *skb;
@@ -166,22 +184,31 @@ unsigned int snat_hook(unsigned int hooknum,
 	destination_ip   =  ip_hdr(sock_buff)->daddr;
 	udp_header       =  (struct udphdr *)(sock_buff->data + (( (ip_hdr(sock_buff))->ihl ) * 4));
 	destination_port =  udp_header->dest; 
-	rule = search_nat_table(destination_ip, destination_port, &nat_head); 
-	if(rule != NULL)
-	{
-		ip_hdr(sock_buff)->saddr = *(unsigned int *)PUBLIC_IP_ADDRESS_NAT;
-	}
-	else
+	udp_len          =  (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
+	rule = search_nat_table(destination_ip, destination_port); 
+	if(rule == NULL)
 	{
 		return NF_DROP; //drop packet if rule is not found in NAT table
 	}
+	ip_hdr(sock_buff)->saddr = *(unsigned int *)PUBLIC_IP_ADDRESS_NAT;
+	udp_header->check = 0;
+	udp_header->check = csum_tcpudp_magic(ip_hdr(sock_buff)->saddr,
+					      ip_hdr(sock_buff)->daddr,
+					      udp_len,
+					      IPPROTO_UDP,
+					      csum_partial((unsigned char *)udp_header,
+							   udp_len,
+							   0));
+	ip_hdr(sock_buff)->check = 0;
+	ip_hdr(sock_buff)->check = ip_fast_csum(ip_hdr(sock_buff), ip_hdr(sock_buff)->ihl);
+
 	return NF_ACCEPT;
 }
 
 int init_module()
 {
 	netfilter_ops_in.hook		=		(nf_hookfn *)dnat_hook;
-	netfilter_ops_in.pf			=		PF_INET;
+	netfilter_ops_in.pf		=		PF_INET;
 	netfilter_ops_in.hooknum	=		NF_INET_PRE_ROUTING;
 	netfilter_ops_in.priority	=		NF_IP_PRI_FIRST;
 
