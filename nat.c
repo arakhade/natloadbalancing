@@ -24,8 +24,8 @@ char *server_ip[4]={"\xC0\xA8\x01\x1", 	// 192.168.1.1
 					"\xC0\xA8\x01\x1", 	// 192.168.2.1
 					"\xC0\xA8\x01\x1",	// 192.168.3.1
 					"\xC0\xA8\x01\x1"};	// 192.168.4.1
-static int round_robin_server_number = 0;
 
+static int round_robin_server_number = 0;
 static struct nf_hook_ops netfilter_ops_in, netfilter_ops_out;
 static char *if_eth0 = "eth0";
 static char *if_eth1 = "eth1";
@@ -105,12 +105,12 @@ unsigned int dnat_hook(unsigned int hooknum,
 	{
 		printk("2\n");
 		if((strcmp(in->name, if_eth1) == 0) ||
-		   (strcmp(in->name, if_eth2) == 0) ||
-                   (strcmp(in->name, if_eth3) == 0) ||
-                   (strcmp(in->name, if_eth4) == 0)) 
+			(strcmp(in->name, if_eth2) == 0) ||
+			(strcmp(in->name, if_eth3) == 0) ||
+			(strcmp(in->name, if_eth4) == 0)) 
 		{ 
-		printk("3\n");
-		return NF_ACCEPT; 
+			printk("3\n");
+			return NF_ACCEPT; 
 		}
 	}
 	sock_buff = skb;
@@ -129,7 +129,6 @@ unsigned int dnat_hook(unsigned int hooknum,
 		printk("6\n");
 		return NF_DROP;
 	}
-	
 	/* Check if it's a UDP packet and its destination port number */
 	if(( (ip_hdr(sock_buff))->protocol ) != 17)
 	{
@@ -145,7 +144,6 @@ unsigned int dnat_hook(unsigned int hooknum,
 		printk("8\n");
 		return NF_DROP; 
 	}
-
 	/* Search nat_table for client entry */
 	source_port =  udp_header->source; 
 	udp_len = (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
@@ -171,7 +169,7 @@ unsigned int dnat_hook(unsigned int hooknum,
 					      udp_len,
 					      IPPROTO_UDP,
 					      csum_partial((unsigned char *)udp_header,
-							   udp_len,
+					      udp_len,
 							   0));
 	ip_hdr(sock_buff)->check = 0;
 	ip_hdr(sock_buff)->check = ip_fast_csum(ip_hdr(sock_buff), ip_hdr(sock_buff)->ihl);
