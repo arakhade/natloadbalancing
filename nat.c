@@ -20,7 +20,7 @@
 #define PUBLIC_VIDEO_PORT_NAT "\x1F\x90"         // 8080
 #define NUMBER_OF_SERVERS     4
 
-char *server_ip[4]={"\xC0\xA8\x01\x1", 	// 192.168.1.1
+static char *server_ip[4]={"\xC0\xA8\x01\x1", 	// 192.168.1.1
 					"\xC0\xA8\x01\x1", 	// 192.168.2.1
 					"\xC0\xA8\x01\x1",	// 192.168.3.1
 					"\xC0\xA8\x01\x1"};	// 192.168.4.1
@@ -32,8 +32,11 @@ static char *if_eth1 = "eth1";
 static char *if_eth2 = "eth2";
 static char *if_eth3 = "eth3";
 static char *if_eth4 = "eth4";
-struct sk_buff *sock_buff;
-struct udphdr *udp_header;
+static struct sk_buff *sock_buff;
+static struct udphdr *udp_header;
+static LIST_HEAD(nat_head);
+static int table_entries = 0;
+
 
 typedef struct nat_table {
 	unsigned int client_ip;
@@ -49,11 +52,6 @@ typedef struct nat_table {
 	}*/
 	
 }nat_table;
-
-
-LIST_HEAD(nat_head);
-
-int table_entries = 0;
 
 nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_port)
 {
@@ -124,42 +122,55 @@ unsigned int dnat_hook(unsigned int hooknum,
 		printk("5\n");
 		return NF_ACCEPT; 
 	}
-	if(( (ip_hdr(sock_buff))->daddr ) != *(unsigned int *)PUBLIC_IP_ADDRESS_NAT)
+	if(!( (ip_hdr(sock_buff))->daddr ))
 	{
 		printk("6\n");
+		return NF_ACCEPT;
+	}
+	if(( (ip_hdr(sock_buff))->daddr ) != *(unsigned int *)PUBLIC_IP_ADDRESS_NAT)
+	{
+		printk("7\n");
 		return NF_DROP;
+	}
+	if(!( (ip_hdr(sock_buff))->protocol ))
+	{
+		return NF_ACCEPT;
 	}
 	/* Check if it's a UDP packet and its destination port number */
 	if(( (ip_hdr(sock_buff))->protocol ) != 17)
 	{
-		printk("7\n");
+		printk("8\n");
 		return NF_ACCEPT;
 	}
 	
 	source_ip   =  ip_hdr(sock_buff)->saddr;
 	udp_header  =  (struct udphdr *)(sock_buff->data + (( (ip_hdr(sock_buff))->ihl ) * 4));
-	
+	if(!udp_header)
+	{
+		printk("9\n");
+		return NF_ACCEPT;
+	}
 	if((udp_header->dest) != *(unsigned short *)PUBLIC_VIDEO_PORT_NAT) 
 	{
-		printk("8\n");
+		printk("10\n");
 		return NF_DROP; 
 	}
 	/* Search nat_table for client entry */
 	source_port =  udp_header->source; 
 	udp_len = (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
 	rule = search_nat_table(source_ip, source_port); 
-	printk("9\n");
+	printk("11\n");
 	if(rule != NULL)
 	{
-		printk("10\n");
+		printk("12\n");
 		ip_hdr(sock_buff)->daddr = rule->server_ip;
 	}
 	else
 	{
-		printk("11\n");
+		printk("13\n");
 		if(!(insert_nat_table_roundrobin(source_ip, source_port)))
 		{
-			printk("12\n");
+			printk("13\n");
 			return NF_DROP;
 		}
 	}
@@ -220,6 +231,10 @@ unsigned int snat_hook(unsigned int hooknum,
 	}
 	destination_ip   =  ip_hdr(sock_buff)->daddr;
 	udp_header       =  (struct udphdr *)(sock_buff->data + (( (ip_hdr(sock_buff))->ihl ) * 4));
+	if(!udp_header)
+	{
+		return NF_ACCEPT;
+	}
 	destination_port =  udp_header->dest; 
 	udp_len          =  (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
 	rule = search_nat_table(destination_ip, destination_port); 
@@ -248,7 +263,7 @@ unsigned int snat_hook(unsigned int hooknum,
 int init_module()
 {
 	netfilter_ops_in.hook		=		(nf_hookfn *)dnat_hook;
-	netfilter_ops_in.pf			=		PF_INET;
+	netfilter_ops_in.pf		=		PF_INET;
 	netfilter_ops_in.hooknum	=		NF_INET_PRE_ROUTING;
 	netfilter_ops_in.priority	=		NF_IP_PRI_FIRST;
 
