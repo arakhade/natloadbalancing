@@ -80,6 +80,10 @@ int	insert_nat_table_roundrobin(int source_ip,int source_port)
 	temp->client_ip = source_ip;
 	temp->client_port = source_port;
 	temp->server_ip = *(unsigned int *)server_ip[round_robin_server_number];
+	if(!sock_buff)
+		return 0;
+	else if(!ip_hdr(sock_buff))
+		return 0;
 	ip_hdr(sock_buff)->daddr = temp->server_ip;
 	list_add(&temp->list, &nat_head);
 	round_robin_server_number = (round_robin_server_number + 1) % 4;
