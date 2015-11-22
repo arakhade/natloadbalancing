@@ -1,0 +1,9 @@
+#! /bin/sh
+
+ifconfig eth1
+netstat -rn
+sudo apt-get install git
+git clone https://www.github.com/arakhade/natloadbalancing.git
+cd natloadbalancing
+git checkout branch1
+sudo apt-get install gcc

@@ -1,0 +1,13 @@
+#! /bin/sh
+
+ifconfig eth1
+netstat -rn
+route add -net 192.168.2.0 netmask 255.255.255.0 gw 192.168.1.21 dev eth1
+route add -net 192.168.3.0 netmask 255.255.255.0 gw 192.168.1.21 dev eth1
+route add -net 192.168.4.0 netmask 255.255.255.0 gw 192.168.1.21 dev eth1
+route add -net 152.168.0.0 netmask 255.255.255.0 gw 192.168.1.21 dev eth1
+netstat -rn
+git clone https://www.github.com/arakhade/natloadbalancing.git
+cd natloadbalancing
+git checkout branch1
+gcc -o server server.c
