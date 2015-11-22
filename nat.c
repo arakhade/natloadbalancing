@@ -32,10 +32,9 @@ static char *if_eth1 = "eth1";
 static char *if_eth2 = "eth2";
 static char *if_eth3 = "eth3";
 static char *if_eth4 = "eth4";
+static int table_entries = 0;
 static struct sk_buff *sock_buff;
 static struct udphdr *udp_header;
-static LIST_HEAD(nat_head);
-static int table_entries = 0;
 
 
 typedef struct nat_table {
@@ -53,13 +52,16 @@ typedef struct nat_table {
 	
 }nat_table;
 
+static nat_table nat_head;
+
+
 nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_port)
 {
 	nat_table *table_row;
 	struct list_head *ptr;
 	unsigned int  cl_ip;
 	unsigned short cl_port;
-	list_for_each(ptr, &nat_head)
+	list_for_each(ptr, &nat_head.list)
 	{
 		table_row = list_entry(ptr, struct nat_table, list);
 		cl_ip = table_row->client_ip;	
@@ -85,7 +87,7 @@ int	insert_nat_table_roundrobin(int source_ip,int source_port)
 	else if(!ip_hdr(sock_buff))
 		return 0;
 	ip_hdr(sock_buff)->daddr = temp->server_ip;
-	list_add(&temp->list, &nat_head);
+	list_add_tail(&temp->list, &nat_head.list);
 	round_robin_server_number = (round_robin_server_number + 1) % 4;
 	return 1;
 }
@@ -266,8 +268,9 @@ unsigned int snat_hook(unsigned int hooknum,
 }
 int init_module()
 {
+	LIST_HEAD(nat_head);
 	netfilter_ops_in.hook		=		(nf_hookfn *)dnat_hook;
-	netfilter_ops_in.pf		=		PF_INET;
+	netfilter_ops_in.pf			=		PF_INET;
 	netfilter_ops_in.hooknum	=		NF_INET_PRE_ROUTING;
 	netfilter_ops_in.priority	=		NF_IP_PRI_FIRST;
 
