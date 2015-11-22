@@ -138,54 +138,49 @@ unsigned int dnat_hook(unsigned int hooknum,
 			printk(KERN_INFO "Dropped. Cause: Not destined to public IP of NAT");
 			return NF_DROP;
 		}
-		if(!( (ip_hdr(sock_buff))->protocol ))
-		{
-			return NF_ACCEPT;
-		}
+
 		/* Check if it's a UDP packet and its destination port number */
-		if(( (ip_hdr(sock_buff))->protocol ) != 17)
-		{
-			return NF_ACCEPT;
-		}
-	
 		source_ip   =  ip_hdr(sock_buff)->saddr;
-		udp_header  =  (struct udphdr *)(sock_buff->data + (( (ip_hdr(sock_buff))->ihl ) * 4));
-		if(!udp_header)
+		if(( (ip_hdr(sock_buff))->protocol ) == IPPROTO_UDP)
 		{
-			printk(KERN_ERR "UDP header not initialized\n");
-			return NF_ACCEPT;
-		}
-		if((udp_header->dest) != *(unsigned short *)PUBLIC_VIDEO_PORT_NAT) 
-		{
-			printk(KERN_INFO "Dropped. Cause: Not destined to public port of NAT\n");
-			return NF_DROP; 
-		}
-		/* Search nat_table for client entry */
-		source_port =  udp_header->source; 
-		udp_len = (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
-		rule = search_nat_table(source_ip, source_port); 
-		if(rule != NULL)
-		{
-			ip_hdr(sock_buff)->daddr = rule->server_ip;
-		}
-		else
-		{
-			if(!(insert_nat_table_roundrobin(source_ip, source_port)))
+			udp_header  =  (struct udphdr *)(sock_buff->data + (( (ip_hdr(sock_buff))->ihl ) * 4));
+			if(!udp_header)
 			{
-				printk(KERN_ERR "Could not insert rule to NAT table\n");
-				return NF_DROP;
+				printk(KERN_ERR "UDP header not initialized\n");
+				return NF_ACCEPT;
 			}
+			if((udp_header->dest) != *(unsigned short *)PUBLIC_VIDEO_PORT_NAT) 
+			{
+				printk(KERN_INFO "Dropped. Cause: Not destined to public port of NAT\n");
+				return NF_DROP; 
+			}
+			/* Search nat_table for client entry */
+			source_port =  udp_header->source; 
+			udp_len = (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
+			rule = search_nat_table(source_ip, source_port); 
+			if(rule != NULL)
+			{
+				ip_hdr(sock_buff)->daddr = rule->server_ip;
+			}
+			else
+			{
+				if(!(insert_nat_table_roundrobin(source_ip, source_port)))
+				{
+					printk(KERN_ERR "Could not insert rule to NAT table\n");
+					return NF_DROP;
+				}
+			}
+			udp_header->check = 0;
+			udp_header->check = csum_tcpudp_magic(ip_hdr(sock_buff)->saddr,
+							      ip_hdr(sock_buff)->daddr,
+							      udp_len,
+							      IPPROTO_UDP,
+							      csum_partial((unsigned char *)udp_header,
+							      udp_len,
+							      0));
+			ip_hdr(sock_buff)->check = 0;
+			ip_hdr(sock_buff)->check = ip_fast_csum(ip_hdr(sock_buff), ip_hdr(sock_buff)->ihl);
 		}
-		udp_header->check = 0;
-		udp_header->check = csum_tcpudp_magic(ip_hdr(sock_buff)->saddr,
-						      ip_hdr(sock_buff)->daddr,
-						      udp_len,
-						      IPPROTO_UDP,
-						      csum_partial((unsigned char *)udp_header,
-						      udp_len,
-						      0));
-		ip_hdr(sock_buff)->check = 0;
-		ip_hdr(sock_buff)->check = ip_fast_csum(ip_hdr(sock_buff), ip_hdr(sock_buff)->ihl);
 	}
 	else // if(in)
 	{
@@ -213,8 +208,6 @@ unsigned int snat_hook(unsigned int hooknum,
 		{
 			return NF_ACCEPT; 
 		}
-
-		/* Check if it's a UDP packet */
 		sock_buff = skb;
 		if(!sock_buff)
 		{
@@ -226,37 +219,38 @@ unsigned int snat_hook(unsigned int hooknum,
 			printk(KERN_ERR "IP header not initialized\n");
 			return NF_ACCEPT;
 		}
-		if(( (ip_hdr(sock_buff))->protocol ) != 17)
+
+		/* Check if it's a UDP packet */
+		if(( (ip_hdr(sock_buff))->protocol ) == IPPROTO_UDP)
 		{
-			return NF_ACCEPT; 
-		}
-		destination_ip   =  ip_hdr(sock_buff)->daddr;
-		udp_header       =  (struct udphdr *)(sock_buff->data + (( (ip_hdr(sock_buff))->ihl ) * 4));
-		if(!udp_header)
-		{
-			printk(KERN_ERR "UDP header not initialized\n");
-			return NF_ACCEPT;
-		}
-		destination_port =  udp_header->dest; 
-		udp_len          =  (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
-		rule = search_nat_table(destination_ip, destination_port); 
-		if(rule == NULL)
-		{
-			printk(KERN_ERR "Rule not found in NAT table\n");
-			return NF_DROP; //drop packet if rule is not found in NAT table
-		}
-		ip_hdr(sock_buff)->saddr = *(unsigned int *)PUBLIC_IP_ADDRESS_NAT;
-		udp_header->check = 0;
-		udp_header->check = csum_tcpudp_magic(ip_hdr(sock_buff)->saddr,
-						    ip_hdr(sock_buff)->daddr,
-						    udp_len,
-						    IPPROTO_UDP,
-						    csum_partial((unsigned char *)udp_header,
-						    udp_len,
-						    0));
+			destination_ip   =  ip_hdr(sock_buff)->daddr;
+			udp_header       =  (struct udphdr *)(sock_buff->data + (( (ip_hdr(sock_buff))->ihl ) * 4));
+			if(!udp_header)
+			{
+				printk(KERN_ERR "UDP header not initialized\n");
+				return NF_ACCEPT;
+			}
+			destination_port =  udp_header->dest; 
+			udp_len          =  (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
+			rule = search_nat_table(destination_ip, destination_port); 
+			if(rule == NULL)
+			{
+				printk(KERN_ERR "Rule not found in NAT table\n");
+				return NF_DROP; //drop packet if rule is not found in NAT table
+			}
+			ip_hdr(sock_buff)->saddr = *(unsigned int *)PUBLIC_IP_ADDRESS_NAT;
+			udp_header->check = 0;
+			udp_header->check = csum_tcpudp_magic(ip_hdr(sock_buff)->saddr,
+							      ip_hdr(sock_buff)->daddr,
+							      udp_len,
+							      IPPROTO_UDP,
+							      csum_partial((unsigned char *)udp_header,
+							      udp_len,
+							      0));
 						
-		ip_hdr(sock_buff)->check = 0;
-		ip_hdr(sock_buff)->check = ip_fast_csum(ip_hdr(sock_buff), ip_hdr(sock_buff)->ihl);
+			ip_hdr(sock_buff)->check = 0;
+			ip_hdr(sock_buff)->check = ip_fast_csum(ip_hdr(sock_buff), ip_hdr(sock_buff)->ihl);
+		}
 	}
 	else // if(out)
 	{
