@@ -87,6 +87,7 @@ int	insert_nat_table_roundrobin(int source_ip,int source_port)
 	else if(!ip_hdr(sock_buff))
 		return 0;
 	ip_hdr(sock_buff)->daddr = temp->server_ip;
+	INIT_LIST_HEAD(&temp->list);
 	list_add_tail(&temp->list, &nat_head.list);
 	round_robin_server_number = (round_robin_server_number + 1) % 4;
 	return 1;
@@ -268,7 +269,8 @@ unsigned int snat_hook(unsigned int hooknum,
 }
 int init_module()
 {
-	LIST_HEAD(nat_head);
+	//LIST_HEAD(nat_head);
+	INIT_LIST_HEAD(&nat_head.list);
 	netfilter_ops_in.hook		=		(nf_hookfn *)dnat_hook;
 	netfilter_ops_in.pf			=		PF_INET;
 	netfilter_ops_in.hooknum	=		NF_INET_PRE_ROUTING;
