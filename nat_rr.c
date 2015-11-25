@@ -15,6 +15,7 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/skbuff.h>
 #include <linux/udp.h>
+#include <sys/time.h>
 
 #define PUBLIC_IP_ADDRESS_NAT "\x98\xA8\x00\x15" // 152.168.0.21
 #define PUBLIC_VIDEO_PORT_NAT "\x1F\x90"         // 8080
@@ -45,8 +46,8 @@ typedef struct nat_table {
 	unsigned int server_ip;
 	unsigned short client_port;
 	unsigned short server_port;
-	//timestamp to be done
-	
+	struct timeval t;
+	struct tm timestamp;
 	struct list_head list;
 	/*struct list_head{
 		struct list_head *next;
@@ -69,7 +70,18 @@ nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_
 		cl_ip = table_row->client_ip;	
 		cl_port = table_row->client_port;
 		if(client_ipaddress== cl_ip && client_port == cl_port)
+		{
+			struct timeval t;
+			struct tm timestamp;			
+			do_gettimeofday(&t);	
+			time_to_tm(t.tv_sec, 0, &timestamp);
+			table_row->timestamp.tm_hour=timestamp.tm_hour;
+			table_row->timestamp.tm_min=timestamp.tm_min;
+			table_row->timestamp.tm_sec=timestamp.tm_sec;				
+			table_row->t.tv_usec=t.tv_usec;
 			return table_row;
+			
+		}
 	}
 	return NULL;
 }
@@ -86,6 +98,15 @@ int insert_nat_table_roundrobin(int source_ip,int source_port)
 	temp->client_ip = source_ip;
 	temp->client_port = source_port;
 	temp->server_ip = *(unsigned int *)server_list[round_robin_server_number];
+	struct timeval t;
+	struct tm timestamp;			
+	do_gettimeofday(&t);	
+	time_to_tm(t.tv_sec, 0, &timestamp);
+	temp->timestamp.tm_hour=timestamp.tm_hour;
+	temp->timestamp.tm_min=timestamp.tm_min;
+	temp->timestamp.tm_sec=timestamp.tm_sec;				
+	temp->t.tv_usec=t.tv_usec;
+			
 	if(!sock_buff)
 		return 0;
 	if(!ip_hdr(sock_buff))
