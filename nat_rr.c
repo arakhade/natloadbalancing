@@ -15,7 +15,7 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/skbuff.h>
 #include <linux/udp.h>
-#include <sys/time.h>
+#include <linux/time.h>
 
 #define PUBLIC_IP_ADDRESS_NAT "\x98\xA8\x00\x15" // 152.168.0.21
 #define PUBLIC_VIDEO_PORT_NAT "\x1F\x90"         // 8080
