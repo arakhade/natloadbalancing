@@ -20,6 +20,7 @@
 #define PUBLIC_IP_ADDRESS_NAT "\x98\xA8\x00\x15" // 152.168.0.21
 #define PUBLIC_VIDEO_PORT_NAT "\x1F\x90"         // 8080
 #define NUMBER_OF_SERVERS     4
+#define MAX_TABLE_ENTRIES	10
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("NAT with round robin load balancing");
@@ -47,7 +48,7 @@ typedef struct nat_table {
 	unsigned short client_port;
 	unsigned short server_port;
 	struct timeval t;
-	struct tm timestamp;
+	//struct tm timestamp;
 	struct list_head list;
 	/*struct list_head{
 		struct list_head *next;
@@ -57,6 +58,27 @@ typedef struct nat_table {
 }nat_table;
 
 static nat_table nat_head;
+
+nat_table * timeout(void)
+{
+	nat_table *table_row, *table_id = NULL;
+	struct list_head *ptr;
+	struct timeval min,t;
+	do_gettimeofday(&min);
+
+	list_for_each(ptr, &nat_head.list)
+	{
+		table_row = list_entry(ptr, struct nat_table, list);
+		t=table_row->t;
+		if(timeval_compare(&min, &t) == 1)
+		{
+			min.tv_sec = t.tv_sec;
+			min.tv_usec = t.tv_usec;
+			table_id = table_row;
+		}
+	}
+	return table_id;
+}
 
 nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_port)
 {
@@ -72,13 +94,11 @@ nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_
 		if(client_ipaddress== cl_ip && client_port == cl_port)
 		{
 			struct timeval t;
-			struct tm timestamp;			
+				
 			do_gettimeofday(&t);	
-			time_to_tm(t.tv_sec, 0, &timestamp);
-			table_row->timestamp.tm_hour=timestamp.tm_hour;
-			table_row->timestamp.tm_min=timestamp.tm_min;
-			table_row->timestamp.tm_sec=timestamp.tm_sec;				
+							
 			table_row->t.tv_usec=t.tv_usec;
+			table_row->t.tv_sec=t.tv_sec;
 			return table_row;
 			
 		}
@@ -88,32 +108,45 @@ nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_
 
 int insert_nat_table_roundrobin(int source_ip,int source_port)
 {	
-	nat_table * temp;
-	temp = kmalloc(sizeof(struct nat_table *), GFP_KERNEL);
-	if(!temp)
-	{
-		printk(KERN_ERR "kmalloc failed\n");
-		return 0;
-	}
-	temp->client_ip = source_ip;
-	temp->client_port = source_port;
-	temp->server_ip = *(unsigned int *)server_list[round_robin_server_number];
 	struct timeval t;
-	struct tm timestamp;			
-	do_gettimeofday(&t);	
-	time_to_tm(t.tv_sec, 0, &timestamp);
-	temp->timestamp.tm_hour=timestamp.tm_hour;
-	temp->timestamp.tm_min=timestamp.tm_min;
-	temp->timestamp.tm_sec=timestamp.tm_sec;				
-	temp->t.tv_usec=t.tv_usec;
-			
+	nat_table *temp;	
+	do_gettimeofday(&t);
+	
+	
+	
+	if(table_entries >= MAX_TABLE_ENTRIES)
+	{
+		temp = timeout();
+		temp->client_ip = source_ip;
+		temp->client_port = source_port;
+		temp->server_ip = *(unsigned int *)server_list[round_robin_server_number];
+		temp->t.tv_usec=t.tv_usec;
+		temp->t.tv_sec=t.tv_sec;
+	}
+	else
+	{
+		temp = kmalloc(sizeof(struct nat_table *), GFP_KERNEL);
+		if(!temp)
+		{
+			printk(KERN_ERR "kmalloc failed\n");
+			return 0;
+		}
+		temp->client_ip = source_ip;
+		temp->client_port = source_port;
+		temp->server_ip = *(unsigned int *)server_list[round_robin_server_number];				
+		temp->t.tv_usec=t.tv_usec;
+		temp->t.tv_sec=t.tv_sec;
+		table_entries++;	
+	
+	INIT_LIST_HEAD(&temp->list);
+	list_add_tail(&temp->list, &nat_head.list);
+	}
+
 	if(!sock_buff)
 		return 0;
 	if(!ip_hdr(sock_buff))
 		return 0;
 	ip_hdr(sock_buff)->daddr = temp->server_ip;
-	INIT_LIST_HEAD(&temp->list);
-	list_add_tail(&temp->list, &nat_head.list);
 	round_robin_server_number = (round_robin_server_number + 1) % NUMBER_OF_SERVERS;
 	return 1;
 }
@@ -315,3 +348,4 @@ void cleanup_module()
 		kfree(an_entry);
 	}
 }
+
