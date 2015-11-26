@@ -19,14 +19,15 @@
 #define PUBLIC_IP_ADDRESS_NAT "\x98\xA8\x00\x15" // 152.168.0.21
 #define PUBLIC_VIDEO_PORT_NAT "\x1F\x90"         // 8080
 #define NUMBER_OF_SERVERS     4
+#define MAX_TABLE_ENTRIES     10
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("NAT with round robin load balancing");
 
 static const char *server_list[4]={"\xC0\xA8\x01\x1", 	// 192.168.1.1
-				   "\xC0\xA8\x01\x1", 	// 192.168.2.1
-				   "\xC0\xA8\x01\x1",	// 192.168.3.1
-				   "\xC0\xA8\x01\x1"};	// 192.168.4.1
+				   "\xC0\xA8\x02\x1", 	// 192.168.2.1
+				   "\xC0\xA8\x03\x1",	// 192.168.3.1
+				   "\xC0\xA8\x04\x1"};	// 192.168.4.1
 
 static struct nf_hook_ops netfilter_ops_in, netfilter_ops_out;
 static const char *if_eth0 = "eth0";
@@ -34,6 +35,7 @@ static const char *if_eth1 = "eth1";
 static const char *if_eth2 = "eth2";
 static const char *if_eth3 = "eth3";
 static const char *if_eth4 = "eth4";
+static const char *if_eth5 = "eth5";
 static struct sk_buff *sock_buff;
 static struct udphdr *udp_header;
 static int round_robin_server_number = 0;
@@ -44,56 +46,36 @@ typedef struct nat_table {
 	unsigned int client_ip;
 	unsigned int server_ip;
 	unsigned short client_port;
-	unsigned short server_port;
 	//timestamp to be done
-	
-	struct list_head list;
-	/*struct list_head{
-		struct list_head *next;
-		struct list_head *prev;
-	}*/
-	
 }nat_table;
 
-static nat_table nat_head;
+static nat_table table_entry[MAX_TABLE_ENTRIES];
 
 nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_port)
 {
-	nat_table *table_row;
-	struct list_head *ptr;
-	unsigned int  cl_ip;
-	unsigned short cl_port;
-	list_for_each(ptr, &nat_head.list)
+	int i;
+	nat_table * table_pointer= &table_entry[0];
+
+	for(i=0; i<table_entries; i++, table_pointer++)
 	{
-		table_row = list_entry(ptr, struct nat_table, list);
-		cl_ip = table_row->client_ip;	
-		cl_port = table_row->client_port;
-		if(client_ipaddress== cl_ip && client_port == cl_port)
-			return table_row;
+		if( (table_pointer->client_ip == client_ipaddress) && (table_pointer->client_port == client_port) )
+			return table_pointer;
 	}
 	return NULL;
 }
 
 int insert_nat_table_roundrobin(int source_ip,int source_port)
 {	
-	nat_table * temp;
-	temp = kmalloc(sizeof(struct nat_table *), GFP_KERNEL);
-	if(!temp)
-	{
-		printk(KERN_ERR "kmalloc failed\n");
-		return 0;
-	}
-	temp->client_ip = source_ip;
-	temp->client_port = source_port;
-	temp->server_ip = *(unsigned int *)server_list[round_robin_server_number];
+	table_entry[table_entries].client_ip = source_ip;
+	table_entry[table_entries].client_port = source_port;
+	table_entry[table_entries].server_ip = *(unsigned int *)server_list[round_robin_server_number];
 	if(!sock_buff)
 		return 0;
 	if(!ip_hdr(sock_buff))
 		return 0;
-	ip_hdr(sock_buff)->daddr = temp->server_ip;
-	INIT_LIST_HEAD(&temp->list);
-	list_add_tail(&temp->list, &nat_head.list);
+	ip_hdr(sock_buff)->daddr = table_entry[table_entries].server_ip;
 	round_robin_server_number = (round_robin_server_number + 1) % NUMBER_OF_SERVERS;
+	table_entries++;
 	return 1;
 }
 
@@ -114,7 +96,8 @@ unsigned int dnat_hook(unsigned int hooknum,
 		if((strcmp(in->name, if_eth1) == 0) ||
 		   (strcmp(in->name, if_eth2) == 0) ||
 		   (strcmp(in->name, if_eth3) == 0) ||
-		   (strcmp(in->name, if_eth4) == 0)) 
+		   (strcmp(in->name, if_eth4) == 0) ||
+		   (strcmp(in->name, if_eth5) == 0)) 
 		{ 
 			return NF_ACCEPT; 
 		}
@@ -129,21 +112,22 @@ unsigned int dnat_hook(unsigned int hooknum,
 			printk(KERN_ERR "IP header not initialized\n");
 			return NF_ACCEPT; 
 		}
-		if(!( (ip_hdr(sock_buff))->daddr ))
-		{
-			printk(KERN_ERR "Destination IP address not initialized\n");
-			return NF_ACCEPT;
-		}
-		if(( (ip_hdr(sock_buff))->daddr ) != *(unsigned int *)PUBLIC_IP_ADDRESS_NAT)
-		{
-			printk(KERN_INFO "Dropped. Cause: Not destined to public IP of NAT");
-			return NF_DROP;
-		}
 
 		/* Check if it's a UDP packet and its destination port number */
 		source_ip   =  ip_hdr(sock_buff)->saddr;
 		if(( (ip_hdr(sock_buff))->protocol ) == IPPROTO_UDP)
 		{
+			if(!( (ip_hdr(sock_buff))->daddr ))
+			{
+				printk(KERN_ERR "Destination IP address not initialized\n");
+				return NF_ACCEPT;
+			}
+			if(( (ip_hdr(sock_buff))->daddr ) != *(unsigned int *)PUBLIC_IP_ADDRESS_NAT)
+			{
+				printk(KERN_INFO "Dropped. Cause: Not destined to public IP of NAT");
+				return NF_DROP;
+			}
+			
 			udp_header  =  (struct udphdr *)(sock_buff->data + (( (ip_hdr(sock_buff))->ihl ) * 4));
 			if(!udp_header)
 			{
@@ -261,8 +245,6 @@ unsigned int snat_hook(unsigned int hooknum,
 }
 int init_module()
 {
-	//LIST_HEAD(nat_head);
-	INIT_LIST_HEAD(&nat_head.list);
 	netfilter_ops_in.hook		=		(nf_hookfn *)dnat_hook;
 	netfilter_ops_in.pf			=		PF_INET;
 	netfilter_ops_in.hooknum	=		NF_INET_PRE_ROUTING;
@@ -281,16 +263,6 @@ int init_module()
 
 void cleanup_module()
 {
-	struct list_head *p, *q;
-	struct nat_table *an_entry;
-
 	nf_unregister_hook(&netfilter_ops_in);
 	nf_unregister_hook(&netfilter_ops_out);
-
-	list_for_each_safe(p, q, &nat_head.list)
-	{
-		an_entry = list_entry(p, struct nat_table, list);
-		list_del(p);
-		kfree(an_entry);
-	}
 }
