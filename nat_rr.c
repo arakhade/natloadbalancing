@@ -25,10 +25,10 @@
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("NAT with round robin load balancing");
 
-static const char *server_list[4]={"\xC0\xA8\x01\x1", 	// 192.168.1.1
-				   "\xC0\xA8\x02\x1", 	// 192.168.2.1
-				   "\xC0\xA8\x03\x1",	// 192.168.3.1
-				   "\xC0\xA8\x04\x1"};	// 192.168.4.1
+static const char *server_list[NUMBER_OF_SERVERS]={"\xC0\xA8\x01\x1", 	// 192.168.1.1
+						   "\xC0\xA8\x02\x1", 	// 192.168.2.1
+						   "\xC0\xA8\x03\x1",	// 192.168.3.1
+						   "\xC0\xA8\x04\x1"};	// 192.168.4.1
 
 static struct nf_hook_ops netfilter_ops_in, netfilter_ops_out;
 static const char *if_eth0 = "eth0";
@@ -95,19 +95,19 @@ nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_
 	return NULL;
 }
 
-int insert_nat_table_roundrobin(int source_ip,int source_port)
+nat_table * insert_nat_table_roundrobin(int source_ip,int source_port)
 {
 	nat_table * table_pointer = NULL;
 	if(!sock_buff)
-		return 1;
+		return NULL;
 	if(!ip_hdr(sock_buff))
-		return 1;
+		return NULL;
 	if(table_size >= MAX_TABLE_ENTRIES)
 	{
 		if( (table_pointer = least_used_table_entry()) == NULL)
 		{
 			printk(KERN_ERR "Timeout: Could not find least used table entry\n");
-			return 1;
+			return NULL;
 		}
 	}
 	else
@@ -118,10 +118,8 @@ int insert_nat_table_roundrobin(int source_ip,int source_port)
 	table_pointer->client_ip = source_ip;
 	table_pointer->client_port = source_port;
 	table_pointer->server_ip = *(unsigned int *)server_list[rr_server_num];
-	assign_timestamp(table_pointer);
-	ip_hdr(sock_buff)->daddr = table_pointer->server_ip;
 	rr_server_num = (rr_server_num + 1) % NUMBER_OF_SERVERS;
-	return 0;
+	return table_pointer;
 }
 
 unsigned int dnat_hook(unsigned int hooknum,
@@ -158,7 +156,7 @@ unsigned int dnat_hook(unsigned int hooknum,
 			return NF_ACCEPT; 
 		}
 
-		/* Check if it's a UDP packet and its destination port number */
+		/* Check if it's a UDP packet */
 		source_ip   =  ip_hdr(sock_buff)->saddr;
 		if(( (ip_hdr(sock_buff))->protocol ) == IPPROTO_UDP)
 		{
@@ -187,20 +185,16 @@ unsigned int dnat_hook(unsigned int hooknum,
 			/* Search nat_table for client entry */
 			source_port =  udp_header->source; 
 			udp_len = (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
-			rule = search_nat_table(source_ip, source_port); 
-			if(rule != NULL)
+			if( (rule = search_nat_table(source_ip, source_port)) == NULL ); 
 			{
-				ip_hdr(sock_buff)->daddr = rule->server_ip;
-				assign_timestamp(rule);
-			}
-			else
-			{
-				if(insert_nat_table_roundrobin(source_ip, source_port))
+				if( (rule = insert_nat_table_roundrobin(source_ip, source_port)) == NULL )
 				{
 					printk(KERN_ERR "Could not insert rule to NAT table\n");
 					return NF_DROP;
 				}
 			}
+			ip_hdr(sock_buff)->daddr = rule->server_ip;
+			assign_timestamp(rule);
 			udp_header->check = 0;
 			udp_header->check = csum_tcpudp_magic(ip_hdr(sock_buff)->saddr,
 							      ip_hdr(sock_buff)->daddr,
@@ -232,6 +226,7 @@ unsigned int snat_hook(unsigned int hooknum,
 	unsigned short destination_port;
 	int udp_len;
 	nat_table *rule; // A pointer to the structure of the corresponding rule
+
 	/* Do not mangle packets other than from servers */
 	if(out)
 	{
@@ -263,8 +258,7 @@ unsigned int snat_hook(unsigned int hooknum,
 			}
 			destination_port =  udp_header->dest; 
 			udp_len          =  (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
-			rule = search_nat_table(destination_ip, destination_port); 
-			if(rule == NULL)
+			if( (rule = search_nat_table(destination_ip, destination_port)) == NULL); 
 			{
 				printk(KERN_ERR "Rule not found in NAT table\n");
 				return NF_DROP; //drop packet if rule is not found in NAT table
