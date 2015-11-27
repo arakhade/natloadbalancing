@@ -47,6 +47,7 @@ static int table_size = 0;
 typedef struct nat_table {
 	unsigned int client_ip;
 	unsigned int server_ip;
+	unsigned int server_index;
 	unsigned short client_port;
 	struct timeval timestamp;
 }nat_table;
@@ -60,7 +61,7 @@ void init_packet_rate(void)
 		server_rate[i] = 0;
 }
 
-int find_server_index(unsigned int server_address)
+/*int find_server_index(unsigned int server_address)
 {
 	int i;
 	for(i=0; i < NUMBER_OF_SERVERS; i++)
@@ -69,7 +70,7 @@ int find_server_index(unsigned int server_address)
 			return i;
 	}
 	return -1;
-}
+}*/
 
 int assign_lr_server(void)
 {
@@ -115,7 +116,7 @@ nat_table * least_used_table_entry(void)
 	return table_id;
 }
 
-nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_port, int * index)
+nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_port)
 {
 	int i;
 	nat_table * table_pointer = &table_entry[0];
@@ -124,19 +125,22 @@ nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_
 	{
 		if( (table_pointer->client_ip == client_ipaddress) && (table_pointer->client_port == client_port) )
 		{
+			/*
 			if( (*index = find_server_index(table_pointer->server_ip)) == -1)
 			{
 				*index = 0;
 				printk(KERN_ERR "Unable to assign server index, set to 0\n");
 			}
+			*/
 			return table_pointer;
 		}
 	}
 	return NULL;
 }
 
-int insert_nat_table_least_rate(int source_ip, int source_port, int * index)
+int insert_nat_table_least_rate(int source_ip, int source_port)
 {
+	int index;
 	nat_table * table_pointer = NULL;	
 	if(!sock_buff)
 		return 1;
@@ -157,8 +161,9 @@ int insert_nat_table_least_rate(int source_ip, int source_port, int * index)
 	}
 	table_pointer->client_ip = source_ip;
 	table_pointer->client_port = source_port;
-	*index = assign_lr_server();
-	table_pointer->server_ip = *(unsigned int *)server_list[*index];
+	index = assign_lr_server();
+	table_pointer->server_ip = *(unsigned int *)server_list[index];
+	table_pointer->server_index = index;
 	assign_timestamp(table_pointer);
 	init_packet_rate();
 	ip_hdr(sock_buff)->daddr = table_pointer->server_ip;
@@ -227,7 +232,7 @@ unsigned int dnat_hook(unsigned int hooknum,
 			/* Search nat_table for client entry */
 			source_port =  udp_header->source; 
 			udp_len = (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
-			rule = search_nat_table(source_ip, source_port, &index); 
+			rule = search_nat_table(source_ip, source_port); 
 			if(rule != NULL)
 			{
 				ip_hdr(sock_buff)->daddr = rule->server_ip;
@@ -235,7 +240,7 @@ unsigned int dnat_hook(unsigned int hooknum,
 			}
 			else
 			{
-				if(insert_nat_table_least_rate(source_ip, source_port, &index))
+				if(insert_nat_table_least_rate(source_ip, source_port))
 				{
 					printk(KERN_ERR "Could not insert rule to NAT table\n");
 					return NF_DROP;
@@ -304,7 +309,7 @@ unsigned int snat_hook(unsigned int hooknum,
 			}
 			destination_port =  udp_header->dest; 
 			udp_len          =  (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
-			rule = search_nat_table(destination_ip, destination_port, &index); 
+			rule = search_nat_table(destination_ip, destination_port); 
 			if(rule == NULL)
 			{
 				printk(KERN_ERR "Rule not found in NAT table\n");
