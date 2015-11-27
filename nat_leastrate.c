@@ -161,7 +161,7 @@ int insert_nat_table_least_rate(int source_ip, int source_port, int * index)
 	table_pointer->server_ip = *(unsigned int *)server_list[*index];
 	assign_timestamp(table_pointer);
 	init_packet_rate();
-	ip_hdr(sock_buff)->daddr = table_entry[table_size].server_ip;
+	ip_hdr(sock_buff)->daddr = table_pointer->server_ip;
 	return 0;
 }
 
