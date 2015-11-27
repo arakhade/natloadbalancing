@@ -85,7 +85,7 @@ void assign_timestamp(nat_table *rule)
 	rule->timestamp.tv_usec = t.tv_usec;
 }
 
-nat_table * least_used_table_entry(void)
+nat_table * oldest_timestamp(void)
 {
 	int i;
 	nat_table * table_row = &table_entry[0];
@@ -130,7 +130,7 @@ nat_table * insert_nat_table_least_rate(int source_ip, int source_port)
 		return NULL;
 	if(table_size >= MAX_TABLE_ENTRIES)
 	{
-		if( (table_pointer = least_used_table_entry()) == NULL )
+		if( (table_pointer = oldest_timestamp()) == NULL )
 		{
 			printk(KERN_ERR "Timeout: Could not find least used table entry\n");
 			return NULL;
