@@ -15,6 +15,7 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/skbuff.h>
 #include <linux/udp.h>
+#include <linux/time.h>
 
 #define PUBLIC_IP_ADDRESS_NAT "\x98\xA8\x00\x15" // 152.168.0.21
 #define PUBLIC_VIDEO_PORT_NAT "\x1F\x90"         // 8080
@@ -38,45 +39,89 @@ static const char *if_eth4 = "eth4";
 static const char *if_eth5 = "eth5";
 static struct sk_buff *sock_buff;
 static struct udphdr *udp_header;
-static int round_robin_server_number = 0;
-static int table_entries = 0;
+static int rr_server_num = 0;
+static int table_size = 0;
 
 
 typedef struct nat_table {
 	unsigned int client_ip;
 	unsigned int server_ip;
 	unsigned short client_port;
-	//timestamp to be done
+	struct timeval timestamp;
 }nat_table;
 
 static nat_table table_entry[MAX_TABLE_ENTRIES];
+
+void assign_timestamp(nat_table *rule)
+{
+	struct timeval t;
+	do_gettimeofday(&t);
+	rule->timestamp.tv_sec = t.tv_sec;
+	rule->timestamp.tv_usec = t.tv_usec;
+}
+
+nat_table * least_used_table_entry(void)
+{
+	int i;
+	nat_table * table_row = &table_entry[0];
+	nat_table * table_id = NULL;
+	struct timeval min;
+
+	do_gettimeofday(&min);
+	for(i = 0; i < MAX_TABLE_ENTRIES; i++, table_row++)
+	{
+		if(timeval_compare(&min, &(table_row->timestamp)) == 1)
+		{
+			min.tv_sec = table_row->timestamp.tv_sec;	
+			min.tv_usec = table_row->timestamp.tv_usec;	
+			table_id = table_row;
+		}
+	}
+	return table_id;
+}
 
 nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_port)
 {
 	int i;
 	nat_table * table_pointer= &table_entry[0];
 
-	for(i=0; i<table_entries; i++, table_pointer++)
+	for(i=0; i<table_size; i++, table_pointer++)
 	{
 		if( (table_pointer->client_ip == client_ipaddress) && (table_pointer->client_port == client_port) )
+		{
 			return table_pointer;
+		}
 	}
 	return NULL;
 }
 
 int insert_nat_table_roundrobin(int source_ip,int source_port)
-{	
-	table_entry[table_entries].client_ip = source_ip;
-	table_entry[table_entries].client_port = source_port;
-	table_entry[table_entries].server_ip = *(unsigned int *)server_list[round_robin_server_number];
+{
+	nat_table * table_pointer = NULL;
 	if(!sock_buff)
-		return 0;
+		return 1;
 	if(!ip_hdr(sock_buff))
-		return 0;
-	ip_hdr(sock_buff)->daddr = table_entry[table_entries].server_ip;
-	round_robin_server_number = (round_robin_server_number + 1) % NUMBER_OF_SERVERS;
-	table_entries++;
-	return 1;
+		return 1;
+	if(table_size >= MAX_TABLE_ENTRIES)
+	{
+		if( (table_pointer = least_used_table_entry()) == NULL)
+		{
+			printk(KERN_ERR "Timeout: Could not find least used table entry\n");
+			return 1;
+		}
+	}
+	else
+	{
+		table_pointer = &table_entry[table_size];
+		table_size++;
+	}
+	table_pointer->client_ip = source_ip;
+	table_pointer->client_port = source_port;
+	table_pointer->server_ip = *(unsigned int *)server_list[rr_server_num];
+	assign_timestamp(table_pointer);
+	ip_hdr(sock_buff)->daddr = table_pointer->server_ip;
+	rr_server_num = (rr_server_num + 1) % NUMBER_OF_SERVERS;
+	return 0;
 }
 
 unsigned int dnat_hook(unsigned int hooknum,
@@ -146,10 +191,11 @@ unsigned int dnat_hook(unsigned int hooknum,
 			if(rule != NULL)
 			{
 				ip_hdr(sock_buff)->daddr = rule->server_ip;
+				assign_timestamp(rule);
 			}
 			else
 			{
-				if(!(insert_nat_table_roundrobin(source_ip, source_port)))
+				if(insert_nat_table_roundrobin(source_ip, source_port))
 				{
 					printk(KERN_ERR "Could not insert rule to NAT table\n");
 					return NF_DROP;
@@ -223,6 +269,7 @@ unsigned int snat_hook(unsigned int hooknum,
 				printk(KERN_ERR "Rule not found in NAT table\n");
 				return NF_DROP; //drop packet if rule is not found in NAT table
 			}
+			assign_timestamp(rule);
 			ip_hdr(sock_buff)->saddr = *(unsigned int *)PUBLIC_IP_ADDRESS_NAT;
 			udp_header->check = 0;
 			udp_header->check = csum_tcpudp_magic(ip_hdr(sock_buff)->saddr,
