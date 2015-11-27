@@ -195,7 +195,6 @@ unsigned int dnat_hook(unsigned int hooknum,
 			}
 			if(( (ip_hdr(sock_buff))->daddr ) != *(unsigned int *)PUBLIC_IP_ADDRESS_NAT)
 			{
-				printk(KERN_INFO "Dropped. Cause: Not destined to public IP of NAT");
 				return NF_DROP;
 			}
 			udp_header  =  (struct udphdr *)(sock_buff->data + (( (ip_hdr(sock_buff))->ihl ) * 4));
@@ -212,7 +211,7 @@ unsigned int dnat_hook(unsigned int hooknum,
 			/* Search nat_table for client entry */
 			source_port =  udp_header->source; 
 			udp_len = (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
-			if( (rule = search_nat_table(source_ip, source_port)) == NULL); 
+			if( (rule = search_nat_table(source_ip, source_port)) == NULL)
 			{
 				if( (rule = insert_nat_table_least_rate(source_ip, source_port)) == NULL )
 				{
@@ -286,7 +285,7 @@ unsigned int snat_hook(unsigned int hooknum,
 			}
 			destination_port =  udp_header->dest; 
 			udp_len          =  (sock_buff->len - (ip_hdr(sock_buff)->ihl << 2));
-			if( (rule = search_nat_table(destination_ip, destination_port)) == NULL ); 
+			if( (rule = search_nat_table(destination_ip, destination_port)) == NULL )
 			{
 				printk(KERN_ERR "Rule not found in NAT table\n");
 				return NF_DROP; //drop packet if rule is not found in NAT table
