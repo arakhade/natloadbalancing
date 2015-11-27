@@ -1,9 +1,9 @@
 /*
- * nat.c
+ * nat_leastrate.c
  *
  * A kernel module which implements a DNAT
  *
- * Compile using make. Use insmod nat.ko to insert the module
+ * Compile using make. Use insmod nat_leastrate.ko to insert the module
  *
  */
 
@@ -20,6 +20,7 @@
 #define PUBLIC_IP_ADDRESS_NAT "\x98\xA8\x00\x15" // 152.168.0.21
 #define PUBLIC_VIDEO_PORT_NAT "\x1F\x90"         // 8080
 #define NUMBER_OF_SERVERS     4
+#define MAX_TABLE_ENTRIES     10
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("NAT with least rate load balancing");
@@ -35,28 +36,21 @@ static const char *if_eth1 = "eth1";
 static const char *if_eth2 = "eth2";
 static const char *if_eth3 = "eth3";
 static const char *if_eth4 = "eth4";
+static const char *if_eth5 = "eth5";
 static struct sk_buff *sock_buff;
 static struct udphdr *udp_header;
 static int server_rate[NUMBER_OF_SERVERS];
-static int table_entries = 0;
+static int table_size = 0;
 
 
 typedef struct nat_table {
 	unsigned int client_ip;
 	unsigned int server_ip;
 	unsigned short client_port;
-	unsigned short server_port;
-	//timestamp to be done
-	
-	struct list_head list;
-	/*struct list_head{
-		struct list_head *next;
-		struct list_head *prev;
-	}*/
-	
+
 }nat_table;
 
-static nat_table nat_head;
+static nat_table table_entry[MAX_TABLE_ENTRIES];
 
 void init_packet_rate(void)
 {
@@ -94,23 +88,19 @@ int assign_lr_server(void)
 
 nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_port, int * index)
 {
-	nat_table *table_row;
-	struct list_head *ptr;
-	unsigned int  cl_ip;
-	unsigned short cl_port;
-	list_for_each(ptr, &nat_head.list)
+	int i;
+	nat_table * table_pointer = &table_entry[0];
+
+	for(i=0; i<table_size; i++, table_pointer++)
 	{
-		table_row = list_entry(ptr, struct nat_table, list);
-		cl_ip = table_row->client_ip;	
-		cl_port = table_row->client_port;
-		if(client_ipaddress== cl_ip && client_port == cl_port)
+		if( (table_pointer->client_ip == client_ipaddress) && (table_pointer->client_port == client_port) )
 		{
-			if( (*index = find_server_index(table_row->server_ip)) == -1)
+			if( (*index = find_server_index(table_pointer->server_ip)) == -1)
 			{
 				*index = 0;
 				printk(KERN_ERR "Unable to assign server index, set to 0\n");
 			}
-			return table_row;
+			return table_pointer;
 		}
 	}
 	return NULL;
@@ -118,25 +108,17 @@ nat_table * search_nat_table(unsigned int client_ipaddress, unsigned int client_
 
 int insert_nat_table_least_rate(int source_ip, int source_port, int * index)
 {	
-	nat_table * temp;
-	temp = kmalloc(sizeof(struct nat_table *), GFP_KERNEL);
-	if(!temp)
-	{
-		printk(KERN_ERR "kmalloc failed\n");
-		return 0;
-	}
-	temp->client_ip = source_ip;
-	temp->client_port = source_port;
+	table_entry[table_size].client_ip = source_ip;
+	table_entry[table_size].client_port = source_port;
 	*index = assign_lr_server();
-	temp->server_ip = *(unsigned int *)server_list[*index];
+	table_entry[table_size].server_ip = *(unsigned int *)server_list[*index];
 	init_packet_rate();
 	if(!sock_buff)
 		return 0;
 	if(!ip_hdr(sock_buff))
 		return 0;
-	ip_hdr(sock_buff)->daddr = temp->server_ip;
-	INIT_LIST_HEAD(&temp->list);
-	list_add_tail(&temp->list, &nat_head.list);
+	ip_hdr(sock_buff)->daddr = table_entry[table_size].server_ip;
+	table_size++;
 	return 1;
 }
 
@@ -157,7 +139,8 @@ unsigned int dnat_hook(unsigned int hooknum,
 		if((strcmp(in->name, if_eth1) == 0) ||
 		   (strcmp(in->name, if_eth2) == 0) ||
 		   (strcmp(in->name, if_eth3) == 0) ||
-		   (strcmp(in->name, if_eth4) == 0)) 
+		   (strcmp(in->name, if_eth4) == 0) ||
+		   (strcmp(in->name, if_eth5) == 0)) 
 		{ 
 			return NF_ACCEPT; 
 		}
@@ -172,21 +155,21 @@ unsigned int dnat_hook(unsigned int hooknum,
 			printk(KERN_ERR "IP header not initialized\n");
 			return NF_ACCEPT; 
 		}
-		if(!( (ip_hdr(sock_buff))->daddr ))
-		{
-			printk(KERN_ERR "Destination IP address not initialized\n");
-			return NF_ACCEPT;
-		}
-		if(( (ip_hdr(sock_buff))->daddr ) != *(unsigned int *)PUBLIC_IP_ADDRESS_NAT)
-		{
-			printk(KERN_INFO "Dropped. Cause: Not destined to public IP of NAT");
-			return NF_DROP;
-		}
 
 		/* Check if it's a UDP packet and its destination port number */
 		source_ip   =  ip_hdr(sock_buff)->saddr;
 		if(( (ip_hdr(sock_buff))->protocol ) == IPPROTO_UDP)
 		{
+			if(!( (ip_hdr(sock_buff))->daddr ))
+			{
+				printk(KERN_ERR "Destination IP address not initialized\n");
+				return NF_ACCEPT;
+			}
+			if(( (ip_hdr(sock_buff))->daddr ) != *(unsigned int *)PUBLIC_IP_ADDRESS_NAT)
+			{
+				printk(KERN_INFO "Dropped. Cause: Not destined to public IP of NAT");
+				return NF_DROP;
+			}
 			udp_header  =  (struct udphdr *)(sock_buff->data + (( (ip_hdr(sock_buff))->ihl ) * 4));
 			if(!udp_header)
 			{
@@ -306,8 +289,6 @@ unsigned int snat_hook(unsigned int hooknum,
 }
 int init_module()
 {
-	//LIST_HEAD(nat_head);
-	INIT_LIST_HEAD(&nat_head.list);
 	init_packet_rate();
 
 	netfilter_ops_in.hook		=		(nf_hookfn *)dnat_hook;
@@ -328,16 +309,6 @@ int init_module()
 
 void cleanup_module()
 {
-	struct list_head *p, *q;
-	struct nat_table *an_entry;
-
 	nf_unregister_hook(&netfilter_ops_in);
 	nf_unregister_hook(&netfilter_ops_out);
-
-	list_for_each_safe(p, q, &nat_head.list)
-	{
-		an_entry = list_entry(p, struct nat_table, list);
-		list_del(p);
-		kfree(an_entry);
-	}
 }
